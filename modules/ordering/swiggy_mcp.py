@@ -25,7 +25,8 @@ SWIGGY_MCP_URL = "https://mcp.swiggy.com/food"
 TOKENS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "data", "swiggy_mcp_tokens.json")
 TOKENS_FILE = os.path.normpath(TOKENS_FILE)
 
-_session_id_cache = None
+_UNSET = object()
+_session_id_cache = _UNSET
 
 
 def _load_access_token() -> str:
@@ -76,8 +77,13 @@ def _parse_response(response: httpx.Response) -> dict:
 
 
 async def _ensure_session(client: httpx.AsyncClient) -> str | None:
+    """
+    Returns a session ID if the server issues one, or None for stateless
+    servers (Swiggy's MCP server does not return Mcp-Session-Id — that's
+    valid per spec, servers MAY assign one but aren't required to).
+    """
     global _session_id_cache
-    if _session_id_cache:
+    if _session_id_cache is not _UNSET:
         return _session_id_cache
 
     init_body = {
@@ -92,19 +98,7 @@ async def _ensure_session(client: httpx.AsyncClient) -> str | None:
     }
     resp = await client.post(SWIGGY_MCP_URL, json=init_body, headers=_headers())
     resp.raise_for_status()
-    session_id = resp.headers.get("Mcp-Session-Id")
-
-    if not session_id:
-        # Some MCP servers are stateless and never issue a session ID —
-        # that's valid per spec ("MAY assign"), not necessarily an error.
-        # Surface the actual response so we can tell which case this is.
-        parsed_body = _parse_response(resp)
-        raise RuntimeError(
-            f"No Mcp-Session-Id header returned. "
-            f"Status={resp.status_code}, "
-            f"Headers={dict(resp.headers)}, "
-            f"Body={parsed_body}"
-        )
+    session_id = resp.headers.get("Mcp-Session-Id")  # may legitimately be None
 
     # Required follow-up per spec — confirms client is ready
     notify_body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
