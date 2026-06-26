@@ -17,6 +17,7 @@ from config import BOT_TOKEN
 from utils.auth import owner_only
 from utils.logger import log_event, read_recent_logs
 from module_registry import register_all_modules, MODULE_NAMES
+from modules.ordering.token_loader import restore_swiggy_token_from_env
 
 
 @owner_only
@@ -47,6 +48,7 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     log_event("Hub starting up...")
+    restore_swiggy_token_from_env()
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start_command))
