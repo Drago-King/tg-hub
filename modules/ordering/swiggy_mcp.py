@@ -30,11 +30,6 @@ _session_id_cache = _UNSET
 
 
 def _load_access_token() -> str:
-    """
-    Reads the access token either from a local file (if already written
-    by session_loader-style env var restoration) or directly from the
-    SWIGGY_MCP_TOKENS_B64 env var as a fallback.
-    """
     if os.path.exists(TOKENS_FILE):
         with open(TOKENS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -63,10 +58,6 @@ def _headers(session_id: str | None = None) -> dict:
 
 
 def _parse_response(response: httpx.Response) -> dict:
-    """
-    Server may reply with plain JSON or an SSE stream containing one
-    'data: {...}' event — handle both per the Streamable HTTP spec.
-    """
     content_type = response.headers.get("content-type", "")
     if "text/event-stream" in content_type:
         for line in response.text.splitlines():
@@ -77,11 +68,6 @@ def _parse_response(response: httpx.Response) -> dict:
 
 
 async def _ensure_session(client: httpx.AsyncClient) -> str | None:
-    """
-    Returns a session ID if the server issues one, or None for stateless
-    servers (Swiggy's MCP server does not return Mcp-Session-Id — that's
-    valid per spec, servers MAY assign one but aren't required to).
-    """
     global _session_id_cache
     if _session_id_cache is not _UNSET:
         return _session_id_cache
@@ -98,9 +84,8 @@ async def _ensure_session(client: httpx.AsyncClient) -> str | None:
     }
     resp = await client.post(SWIGGY_MCP_URL, json=init_body, headers=_headers())
     resp.raise_for_status()
-    session_id = resp.headers.get("Mcp-Session-Id")  # may legitimately be None
+    session_id = resp.headers.get("Mcp-Session-Id")
 
-    # Required follow-up per spec — confirms client is ready
     notify_body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
     await client.post(SWIGGY_MCP_URL, json=notify_body, headers=_headers(session_id))
 
@@ -109,10 +94,6 @@ async def _ensure_session(client: httpx.AsyncClient) -> str | None:
 
 
 async def call_tool(tool_name: str, arguments: dict, timeout: float = 30.0) -> dict:
-    """
-    Calls a single Swiggy MCP tool (e.g. 'search_restaurants', 'add_to_cart')
-    and returns the parsed result. Raises on HTTP or JSON-RPC errors.
-    """
     async with httpx.AsyncClient(timeout=timeout) as client:
         session_id = await _ensure_session(client)
 
@@ -140,3 +121,119 @@ async def list_tools(timeout: float = 30.0) -> list[str]:
         resp.raise_for_status()
         parsed = _parse_response(resp)
         return [t["name"] for t in parsed.get("result", {}).get("tools", [])]
+
+
+# ---------------------------------------------------------------------------
+# Typed wrappers — one per MCP tool
+# These extract the "content" text and parse JSON so callers get clean dicts.
+# ---------------------------------------------------------------------------
+
+def _text_content(result: dict) -> str:
+    """Pull the first text block out of an MCP tool result."""
+    content = result.get("content", [])
+    for block in content:
+        if block.get("type") == "text":
+            return block.get("text", "")
+    return json.dumps(result)
+
+
+def _json_content(result: dict) -> dict | list:
+    """Pull first text block and JSON-parse it."""
+    raw = _text_content(result)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"raw": raw}
+
+
+async def get_addresses() -> list[dict]:
+    result = await call_tool("get_addresses", {})
+    data = _json_content(result)
+    return data if isinstance(data, list) else data.get("addresses", [data])
+
+
+async def search_restaurants(query: str, address_id: str = "") -> list[dict]:
+    args = {"query": query}
+    if address_id:
+        args["address_id"] = address_id
+    result = await call_tool("search_restaurants", args)
+    data = _json_content(result)
+    return data if isinstance(data, list) else data.get("restaurants", [data])
+
+
+async def search_menu(query: str, restaurant_id: str) -> list[dict]:
+    result = await call_tool("search_menu", {"query": query, "restaurant_id": restaurant_id})
+    data = _json_content(result)
+    return data if isinstance(data, list) else data.get("items", [data])
+
+
+async def get_restaurant_menu(restaurant_id: str) -> dict:
+    result = await call_tool("get_restaurant_menu", {"restaurant_id": restaurant_id})
+    return _json_content(result)
+
+
+async def get_food_cart() -> dict:
+    result = await call_tool("get_food_cart", {})
+    return _json_content(result)
+
+
+async def update_food_cart(item_id: str, quantity: int, restaurant_id: str) -> dict:
+    result = await call_tool("update_food_cart", {
+        "item_id": item_id,
+        "quantity": quantity,
+        "restaurant_id": restaurant_id,
+    })
+    return _json_content(result)
+
+
+async def flush_food_cart() -> dict:
+    result = await call_tool("flush_food_cart", {})
+    return _json_content(result)
+
+
+async def fetch_food_coupons() -> list[dict]:
+    result = await call_tool("fetch_food_coupons", {})
+    data = _json_content(result)
+    return data if isinstance(data, list) else data.get("coupons", [])
+
+
+async def apply_food_coupon(coupon_code: str) -> dict:
+    result = await call_tool("apply_food_coupon", {"coupon_code": coupon_code})
+    return _json_content(result)
+
+
+async def place_food_order(address_id: str, payment_method: str = "wallet") -> dict:
+    result = await call_tool("place_food_order", {
+        "address_id": address_id,
+        "payment_method": payment_method,
+    })
+    return _json_content(result)
+
+
+async def get_food_orders(limit: int = 5) -> list[dict]:
+    result = await call_tool("get_food_orders", {"limit": limit})
+    data = _json_content(result)
+    return data if isinstance(data, list) else data.get("orders", [data])
+
+
+async def get_food_order_details(order_id: str) -> dict:
+    result = await call_tool("get_food_order_details", {"order_id": order_id})
+    return _json_content(result)
+
+
+async def track_food_order(order_id: str) -> dict:
+    result = await call_tool("track_food_order", {"order_id": order_id})
+    return _json_content(result)
+
+
+async def get_food_delivery_status(order_id: str) -> dict:
+    result = await call_tool("get_food_delivery_status", {"order_id": order_id})
+    return _json_content(result)
+
+
+async def report_error(error_description: str, order_id: str = "") -> dict:
+    args = {"error_description": error_description}
+    if order_id:
+        args["order_id"] = order_id
+    result = await call_tool("report_error", args)
+    return _json_content(result)
