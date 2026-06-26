@@ -8,10 +8,17 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
 from modules.ordering.config import ZOMATO_SESSION_FILE, DEFAULT_TIMEOUT_MS, HEADLESS
 from modules.ordering.base import CartResult
+from modules.ordering.stealth import new_stealth_context
 from utils.logger import log_event
 
 PLATFORM_NAME = "zomato"
 BASE_URL = "https://www.zomato.com"
+
+LAUNCH_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+    "--no-sandbox",
+]
 
 
 async def search_and_get_cart_total(restaurant_name: str, items: list[str]) -> CartResult:
@@ -20,13 +27,14 @@ async def search_and_get_cart_total(restaurant_name: str, items: list[str]) -> C
                            error="no saved session — run login setup first")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=HEADLESS)
-        context = await browser.new_context(storage_state=ZOMATO_SESSION_FILE)
+        browser = await p.chromium.launch(headless=HEADLESS, args=LAUNCH_ARGS)
+        context = await new_stealth_context(browser, ZOMATO_SESSION_FILE)
         page = await context.new_page()
         page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
         try:
-            await page.goto(BASE_URL)
+            await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+            await page.wait_for_timeout(2000)  # let anti-bot JS challenges settle
 
             search_box = page.locator('input[placeholder*="Search for restaurant"]')
             await search_box.click()
