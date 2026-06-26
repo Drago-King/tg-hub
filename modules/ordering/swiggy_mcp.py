@@ -75,7 +75,7 @@ def _parse_response(response: httpx.Response) -> dict:
     return response.json()
 
 
-async def _ensure_session(client: httpx.AsyncClient) -> str:
+async def _ensure_session(client: httpx.AsyncClient) -> str | None:
     global _session_id_cache
     if _session_id_cache:
         return _session_id_cache
@@ -93,8 +93,18 @@ async def _ensure_session(client: httpx.AsyncClient) -> str:
     resp = await client.post(SWIGGY_MCP_URL, json=init_body, headers=_headers())
     resp.raise_for_status()
     session_id = resp.headers.get("Mcp-Session-Id")
+
     if not session_id:
-        raise RuntimeError("Swiggy MCP server did not return a session ID on initialize")
+        # Some MCP servers are stateless and never issue a session ID —
+        # that's valid per spec ("MAY assign"), not necessarily an error.
+        # Surface the actual response so we can tell which case this is.
+        parsed_body = _parse_response(resp)
+        raise RuntimeError(
+            f"No Mcp-Session-Id header returned. "
+            f"Status={resp.status_code}, "
+            f"Headers={dict(resp.headers)}, "
+            f"Body={parsed_body}"
+        )
 
     # Required follow-up per spec — confirms client is ready
     notify_body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
