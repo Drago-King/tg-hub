@@ -103,7 +103,13 @@ async def handle_address_choice(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     restaurants = data.get("restaurants") or data.get("data") or []
-    open_restaurants = [r for r in restaurants if r.get("availabilityStatus") == "OPEN"]
+    # availabilityStatus isn't always present in this response shape —
+    # only filter on it when the field actually exists; otherwise treat
+    # the restaurant as a valid candidate rather than silently dropping it.
+    open_restaurants = [
+        r for r in restaurants
+        if r.get("availabilityStatus") in (None, "OPEN")
+    ]
 
     if not open_restaurants:
         await query.message.reply_text(
