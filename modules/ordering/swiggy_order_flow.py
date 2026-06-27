@@ -304,9 +304,33 @@ async def swiggy_cancel_note_command(update: Update, context: ContextTypes.DEFAU
     )
 
 
+@owner_only
+async def swiggy_debug_search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Diagnostic: dumps the raw search_restaurants response for inspection."""
+    state = _state(context)
+    address_id = state.get("address_id")
+    if not address_id:
+        await update.effective_message.reply_text(
+            "No address selected yet — run /swiggyorder first and pick an address, "
+            "then try this command."
+        )
+        return
+    query_text = " ".join(context.args).strip() or state.get("query", "biryani")
+    try:
+        result = await swiggy_mcp.call_tool(
+            "search_restaurants", {"addressId": address_id, "query": query_text}
+        )
+        await update.effective_message.reply_text(
+            f"Raw result:\n\n{json.dumps(result, indent=2)[:3500]}"
+        )
+    except Exception as e:
+        await update.effective_message.reply_text(f"Failed: {e}")
+
+
 def register(application):
     application.add_handler(CommandHandler("swiggyorder", swiggy_order_command))
     application.add_handler(CommandHandler("swiggycancel", swiggy_cancel_note_command))
+    application.add_handler(CommandHandler("swiggydebugsearch", swiggy_debug_search_command))
     application.add_handler(CallbackQueryHandler(handle_address_choice, pattern=r"^swg_addr:"))
     application.add_handler(CallbackQueryHandler(handle_restaurant_choice, pattern=r"^swg_rest:"))
     application.add_handler(CallbackQueryHandler(handle_item_choice, pattern=r"^swg_item:"))
