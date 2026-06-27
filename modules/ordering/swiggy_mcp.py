@@ -110,8 +110,8 @@ async def _ensure_session(client: httpx.AsyncClient) -> str | None:
 
 async def call_tool(tool_name: str, arguments: dict, timeout: float = 30.0) -> dict:
     """
-    Calls a single Swiggy MCP tool (e.g. 'search_restaurants', 'add_to_cart')
-    and returns the parsed result. Raises on HTTP or JSON-RPC errors.
+    Calls a single Swiggy MCP tool and returns the parsed result. Raises
+    on HTTP or JSON-RPC errors.
     """
     async with httpx.AsyncClient(timeout=timeout) as client:
         session_id = await _ensure_session(client)
@@ -129,6 +129,29 @@ async def call_tool(tool_name: str, arguments: dict, timeout: float = 30.0) -> d
         if "error" in parsed:
             raise RuntimeError(f"Swiggy MCP error calling {tool_name}: {parsed['error']}")
         return parsed.get("result", {})
+
+
+def extract_structured_data(tool_result: dict) -> dict:
+    """
+    Tool results often come wrapped as {"content": [{"type": "text", "text": "..."}]}
+    per the MCP spec, where the actual structured data is JSON-encoded
+    inside that text field, OR as {"structuredContent": {...}} directly.
+    This tries structuredContent first, then falls back to parsing the
+    first text block as JSON, then returns the raw result if neither works.
+    """
+    if "structuredContent" in tool_result:
+        return tool_result["structuredContent"]
+
+    content = tool_result.get("content", [])
+    for block in content:
+        if block.get("type") == "text":
+            text = block.get("text", "")
+            try:
+                return json.loads(text)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+    return tool_result
 
 
 async def list_tools(timeout: float = 30.0) -> list[str]:
