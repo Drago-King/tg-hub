@@ -13,7 +13,7 @@ from utils.logger import log_event
 
 # Add new module filenames here as you build them, e.g.:
 # MODULE_NAMES = ["study", "ordering", "calls"]
-MODULE_NAMES = ["study", "ordering.ordering"]
+MODULE_NAMES = ["study", "ordering.ordering", "ordering.swiggy_order_flow"]
 
 
 def register_all_modules(application):
