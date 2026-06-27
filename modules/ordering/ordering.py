@@ -1,18 +1,13 @@
 """
-Ordering module — Telegram-facing entry point (deep link version).
+Ordering module — Telegram-facing entry point.
 
-Usage in Telegram:
-    /order <restaurant name>
-
-Example:
-    /order Sangeetha Veg Restaurant
-
-Flow:
-    1. Builds direct search links for both Swiggy and Zomato
-    2. Sends both as tappable buttons
-    3. You open whichever app, search result, build your cart, and
-       complete checkout yourself — no automation, no bot-detection risk
+Commands:
+    /order <restaurant name>      — deep links to Swiggy/Zomato search (manual checkout)
+    /swiggytest                   — diagnostic: confirms MCP connection works
+    /swiggyschema <tool_name>     — diagnostic: dumps a tool's input schema
 """
+import json
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler
 
@@ -35,6 +30,22 @@ async def swiggy_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.effective_message.reply_text(f"Connection failed: {e}")
         log_event(f"/swiggytest failed: {e}")
+
+
+@owner_only
+async def swiggy_schema_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Diagnostic: dumps the input schema for a given tool name."""
+    if not context.args:
+        await update.effective_message.reply_text("Usage: /swiggyschema <tool_name>")
+        return
+    tool_name = context.args[0]
+    try:
+        schema = await swiggy_mcp.get_tool_schema(tool_name)
+        await update.effective_message.reply_text(
+            f"Schema for {tool_name}:\n\n{json.dumps(schema, indent=2)[:3500]}"
+        )
+    except Exception as e:
+        await update.effective_message.reply_text(f"Failed: {e}")
 
 
 @owner_only
@@ -72,3 +83,4 @@ async def order_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def register(application):
     application.add_handler(CommandHandler("order", order_command))
     application.add_handler(CommandHandler("swiggytest", swiggy_test_command))
+    application.add_handler(CommandHandler("swiggyschema", swiggy_schema_command))
